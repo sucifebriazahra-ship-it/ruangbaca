@@ -83,6 +83,7 @@
     } catch (e) { storageOk = false; }
     mergeCatalog();
   }
+  const isAdminCover = (u) => typeof u === 'string' && (u.includes('#rb-admin') || u.startsWith('data:'));
   function mergeCatalog() {
     const have = new Set(data.books.map((b) => b.id));
     (global.RB_CATALOG?.BOOKS || []).forEach((b) => { if (!have.has(b.id)) data.books.push({ ...b, _local: !ONLINE ? false : true }); });
@@ -91,7 +92,7 @@
     data.books.forEach((b) => {
       const c = cat.get(b.id);
       if (!c) return;
-      b.rank = c.rank; b.hot = !!c.hot; b.fav = !!c.fav; b.intl = !!c.intl; b.trend_note = c.trend_note; b.language = b.language || c.language; if (c.cover_url) b.cover_url = c.cover_url;
+      b.rank = c.rank; b.hot = !!c.hot; b.fav = !!c.fav; b.intl = !!c.intl; b.trend_note = c.trend_note; b.language = b.language || c.language; if (c.cover_url && !isAdminCover(b.cover_url)) b.cover_url = c.cover_url; // sampul pilihan admin tidak ditimpa katalog
       if (!b.synopsis && c.synopsis) b.synopsis = c.synopsis;
       if (!b.year && c.year) b.year = c.year;
     });
@@ -252,6 +253,8 @@
       if (ex) { Object.keys(book).forEach((k) => { if ((ex[k] === null || ex[k] === undefined || ex[k] === '') && book[k]) ex[k] = book[k]; }); saveDemo(); return ex; }
       return this.insert('books', { ...book, created_at: now() });
     },
+    /** pastikan buku (mis. dari katalog bawaan) sudah ada di database sebelum diubah */
+    pushBook(id) { if (ONLINE) ensureBookRemote(id); },
     flush() { return chain; },
 
     /* ----- autentikasi ----- */

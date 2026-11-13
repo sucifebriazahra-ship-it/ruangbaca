@@ -126,18 +126,21 @@
 
   /* ---------- pemutar cerita ---------- */
   let player = null;
-  const BG = [
-    'linear-gradient(160deg,#e0f2f4 0%,#bad6da 100%)',
-    'linear-gradient(160deg,#ffdbdf 0%,#fff1f2 60%,#ffe797 140%)',
-    'linear-gradient(165deg,#fff6d5 0%,#ffe797 100%)',
-    'linear-gradient(160deg,#f2f3d6 0%,#dddd7b 120%)',
-    'linear-gradient(160deg,#e0f2f4 0%,#ffdbdf 100%)',
-    'linear-gradient(170deg,#bad6da 0%,#e0f2f4 100%)',
-    'linear-gradient(160deg,#ffe797 -20%,#ffdbdf 100%)',
-    'linear-gradient(160deg,#dddd7b -30%,#e0f2f4 90%)',
-    'linear-gradient(160deg,#2f4a50 0%,#5e8c93 100%)',
-    'linear-gradient(160deg,#e0f2f4 0%,#ffdbdf 45%,#ffe797 100%)',
-  ];
+  /* tema latar tiap slide: gradasi + gumpalan warna yang bergerak + motif + butiran kertas.
+     "dark" = teks terang. Warna & motif diatur di CSS (.wp-slide.th-…) */
+  const DARK = new Set(['intro', 'top', 'persona', 'summary']);
+  const SITE = 'ruangbacaku.my.id';
+
+  /** buku untuk tumpukan sampul: buku terbaik dulu, lalu yang sampulnya sudah ada */
+  function summaryBooks(st) {
+    const seen = new Set(), out = [];
+    const push = (b) => { if (b && !seen.has(b.id)) { seen.add(b.id); out.push(b); } };
+    if (st.top) push(st.top.b);
+    st.books.filter((b) => window.API.coverOf(b)).forEach(push);
+    st.books.forEach(push);
+    return out;
+  }
+  const slideBg = (s) => `<div class="wp-bg" aria-hidden="true">${s.art ? `<div class="wp-art" style="background-image:url('${esc(s.art)}')"></div>` : ''}<i class="blob b1"></i><i class="blob b2"></i><i class="blob b3"></i><div class="wp-motif"></div><div class="wp-grain"></div></div>`;
 
   function buildSlides(st, user) {
     const period = st.month === null ? `${st.year}` : `${MONTHS[st.month]} ${st.year}`;
@@ -145,19 +148,22 @@
     const own = me() && me().id === user.id;
     const you = own ? 'Kamu' : name;
     const slides = [];
+    // sampul yang diburamkan sebagai latar di beberapa slide
+    const ART = { count: st.books[0], authors: st.authors[0] && st.authors[0][2][0], top: st.top && st.top.b, summary: (st.top && st.top.b) || st.books[0] };
+    const add = (t, html) => slides.push({ t, html, art: ART[t] ? window.API.coverOf(ART[t]) : null });
     const coverWall = st.books.slice(-14).map((b, i) => `<span class="wc" style="--i:${i}">${cover(b, { link: false })}</span>`).join('');
 
-    slides.push(`<div class="ws ws-intro"><div class="w-in d1 w-logo">${ic('book')} ruangbaca</div>
+    add('intro', `<div class="ws ws-intro"><div class="w-in d1 w-logo">${ic('book')} ruangbaca</div>
       <p class="w-in d2 w-kicker">Reading Wrap</p><h2 class="w-in d3 w-huge">${period}</h2>
       <p class="w-in d4 w-sub">Hai ${name}! Yuk lihat perjalanan bacaan${own ? 'mu' : ''} ${st.month === null ? 'setahun ini' : 'bulan ini'} ✨</p>
       <div class="w-in d5 w-wall">${coverWall}</div></div>`);
 
-    slides.push(`<div class="ws"><p class="w-in d1 w-kicker">${st.month === null ? 'Tahun ini' : 'Bulan ini'} ${you.toLowerCase() === 'kamu' ? 'kamu' : name} menyelesaikan</p>
+    add('count', `<div class="ws"><p class="w-in d1 w-kicker">${st.month === null ? 'Tahun ini' : 'Bulan ini'} ${you.toLowerCase() === 'kamu' ? 'kamu' : name} menyelesaikan</p>
       <div class="w-in d2 w-count"><b data-count="${st.count}">0</b><span>buku</span></div>
       <div class="w-in d3 w-fan">${st.books.slice(0, 7).map((b, i) => `<span style="--i:${i};--n:${Math.min(7, st.books.length)}">${cover(b, { link: false })}</span>`).join('')}</div>
-      <p class="w-in d4 w-sub">${st.liked ? `${st.liked} di antaranya bikin ${own ? 'kamu' : name} jatuh hati ♥` : 'Setiap halaman berarti.'}${st.rereads ? ` ${st.rereads} kali baca ulang.` : ''}</p></div>`);
+      <p class="w-in d4 w-pill">${st.liked ? `<b>${st.liked}</b> di antaranya bikin ${own ? 'kamu' : name} jatuh hati <span class="w-heart">♥</span>` : 'Setiap halaman berarti ✨'}${st.rereads ? ` · ${st.rereads}× baca ulang` : ''}</p></div>`);
 
-    slides.push(`<div class="ws"><p class="w-in d1 w-kicker">Totalnya</p>
+    add('pages', `<div class="ws"><p class="w-in d1 w-kicker">Totalnya</p>
       <div class="w-in d2 w-count"><b data-count="${st.pages}">0</b><span>halaman</span></div>
       <p class="w-in d3 w-big">≈ <b data-count="${st.hours}">0</b> jam membaca</p>
       <p class="w-in d4 w-sub">${st.hours >= 2 ? `Setara menonton sekitar ${Math.max(1, Math.round(st.hours / 2))} film bioskop 🎬 — tapi jauh lebih seru.` : 'Sedikit demi sedikit, lama-lama jadi bukit 📚'}</p>
@@ -165,7 +171,7 @@
 
     if (st.genres.length) {
       const tot = st.genres.reduce((s, g) => s + g[1], 0);
-      slides.push(`<div class="ws"><p class="w-in d1 w-kicker">Genre yang lagi ${own ? 'kamu' : name} suka</p>
+      add('genres', `<div class="ws"><p class="w-in d1 w-kicker">Genre yang lagi ${own ? 'kamu' : name} suka</p>
         <h2 class="w-in d2 w-title">${esc(st.genres[0][0])}</h2>
         <div class="w-bars">${st.genres.slice(0, 5).map(([g, v], i) => `<div class="w-in d${3 + i} wb"><span class="wb-l">${i + 1}. ${esc(g)}</span><span class="wb-t"><i style="--w:${Math.round((v / st.genres[0][1]) * 100)}%"></i></span><span class="wb-v">${Math.round((v / tot) * 100)}%</span></div>`).join('')}</div>
         ${st.reviewGenres.length ? `<p class="w-in d8 w-note">${ic('message')} Genre yang paling sering ${own ? 'kamu' : name} ulas: <b>${esc(st.reviewGenres[0][0])}</b></p>` : ''}</div>`);
@@ -173,7 +179,7 @@
 
     if (st.authors.length) {
       const [top, n, bks] = st.authors[0];
-      slides.push(`<div class="ws"><p class="w-in d1 w-kicker">Penulis favorit${own ? 'mu' : ''}</p>
+      add('authors', `<div class="ws"><p class="w-in d1 w-kicker">Penulis favorit${own ? 'mu' : ''}</p>
         <h2 class="w-in d2 w-title">${esc(top)}</h2>
         <p class="w-in d3 w-sub">${n} buku ${st.month === null ? 'tahun ini' : 'bulan ini'}</p>
         <div class="w-in d4 w-row">${bks.slice(0, 4).map((b) => cover(b, { link: false })).join('')}</div>
@@ -183,7 +189,7 @@
 
     if (st.top) {
       const ex = st.top.e.review ? st.top.e.review.slice(0, 160) + (st.top.e.review.length > 160 ? '…' : '') : '';
-      slides.push(`<div class="ws ws-top"><p class="w-in d1 w-kicker">Bintang ${st.month === null ? 'tahun' : 'bulan'} ini</p>
+      add('top', `<div class="ws ws-top"><p class="w-in d1 w-kicker">Bintang ${st.month === null ? 'tahun' : 'bulan'} ini</p>
         <div class="w-in d2 w-hero-cover">${cover(st.top.b, { link: false })}</div>
         <h2 class="w-in d3 w-title sm">${esc(st.top.b.title)}</h2><p class="w-in d4 w-sub">${esc(st.top.b.author)}</p>
         <p class="w-in d5 w-stars">${starsText(st.top.r)}</p>
@@ -192,40 +198,55 @@
 
     if (st.month === null) {
       const max = Math.max(1, ...st.months);
-      slides.push(`<div class="ws"><p class="w-in d1 w-kicker">Ritme baca${own ? 'mu' : ''}</p>
+      add('rhythm', `<div class="ws"><p class="w-in d1 w-kicker">Ritme baca${own ? 'mu' : ''}</p>
         <h2 class="w-in d2 w-title sm">Paling rajin di bulan ${MONTHS[st.busiestMonth]}</h2>
         <div class="w-in d3 w-chart">${st.months.map((v, i) => `<span class="${i === st.busiestMonth ? 'hi' : ''}" style="--h:${(v / max).toFixed(2)};--i:${i}"><i>${v || ''}</i><small>${MON[i]}</small></span>`).join('')}</div>
         <p class="w-in d4 w-note">Hari favorit menyelesaikan buku: <b>${DAYS[st.busiestDay]}</b></p></div>`);
     } else {
       const max = Math.max(1, ...st.weeks);
-      slides.push(`<div class="ws"><p class="w-in d1 w-kicker">Ritme baca${own ? 'mu' : ''}</p>
+      add('rhythm', `<div class="ws"><p class="w-in d1 w-kicker">Ritme baca${own ? 'mu' : ''}</p>
         <h2 class="w-in d2 w-title sm">Hari favorit: ${DAYS[st.busiestDay]}</h2>
         <div class="w-in d3 w-chart weeks">${st.weeks.map((v, i) => `<span class="${v === max && v ? 'hi' : ''}" style="--h:${(v / max).toFixed(2)};--i:${i}"><i>${v || ''}</i><small>Minggu ${i + 1}</small></span>`).join('')}</div>
         <p class="w-in d4 w-note">${st.avg ? `Rata-rata rating: <b>${st.avg.toFixed(1)} ★</b>` : 'Belum ada rating bulan ini.'}</p></div>`);
     }
 
     if (st.reviews) {
-      slides.push(`<div class="ws"><p class="w-in d1 w-kicker">${you} tidak hanya membaca — ${own ? 'kamu' : 'dia'} bercerita</p>
+      add('reviews', `<div class="ws"><p class="w-in d1 w-kicker">${you} tidak hanya membaca — ${own ? 'kamu' : 'dia'} bercerita</p>
         <div class="w-in d2 w-count"><b data-count="${st.reviews}">0</b><span>ulasan</span></div>
         <div class="w-in d3 w-trio"><span><b data-count="${st.words}">0</b><small>kata ditulis</small></span><span><b data-count="${st.likesReceived}">0</b><small>suka diterima</small></span></div>
         ${st.bestReview ? `<blockquote class="w-in d4">“${esc(st.bestReview.review.slice(0, 150))}${st.bestReview.review.length > 150 ? '…' : ''}”<cite>— tentang ${esc(getBook(st.bestReview.book_id).title)}</cite></blockquote>` : ''}</div>`);
     }
 
-    slides.push(`<div class="ws ws-persona"><p class="w-in d1 w-kicker">Persona baca${own ? 'mu' : ''}</p>
+    add('persona', `<div class="ws ws-persona"><p class="w-in d1 w-kicker">Persona baca${own ? 'mu' : ''}</p>
       <div class="w-in d2 w-emoji">${st.persona[2]}</div>
       <h2 class="w-in d3 w-title">${st.persona[0]}</h2>
       <p class="w-in d4 w-sub">${st.persona[1]}</p>
       ${st.genres.length > 1 ? `<p class="w-in d5 w-note">dengan sentuhan ${esc(st.genres[1][0])}${st.genres[2] ? ' & ' + esc(st.genres[2][0]) : ''}</p>` : ''}</div>`);
 
-    slides.push(`<div class="ws ws-summary"><div class="w-card w-in d1">
-        <div class="wcard-head">${ic('book')} ruangbaca · Wrap ${period}</div>
-        <div class="wcard-user">${RB.avatar(user, 'md', false)}<b>${esc(user.name)}</b></div>
-        <div class="wcard-covers">${st.books.slice(0, 5).map((b) => cover(b, { link: false })).join('')}</div>
-        <div class="wcard-grid">
-          <span><small>Buku</small><b>${st.count}</b></span><span><small>Halaman</small><b>${num(st.pages)}</b></span>
-          <span><small>Genre teratas</small><b>${st.genres[0] ? esc(st.genres[0][0]) : '–'}</b></span><span><small>Penulis favorit</small><b>${st.authors[0] ? esc(st.authors[0][0]) : '–'}</b></span>
-          <span><small>Rating rata-rata</small><b>${st.avg ? st.avg.toFixed(1) + ' ★' : '–'}</b></span><span><small>Persona</small><b>${st.persona[0]}</b></span>
-        </div></div>
+    const stack = summaryBooks(st).slice(0, 3);
+    add('summary', `<div class="ws ws-summary">
+      <div class="wt-wrap w-in d1"><div class="w-ticket">
+        <div class="wt-top">
+          <div class="wt-head"><span class="wt-brand">${ic('book')} ruangbaca</span><span class="wt-tag">Reading Wrap</span></div>
+          <div class="wt-hero">
+            <div class="wt-stack n${stack.length}">${stack.map((b, i) => `<span style="--i:${i}">${cover(b, { link: false })}</span>`).join('')}</div>
+            <div class="wt-title${st.month === null ? '' : ' long'}"><small>${st.month === null ? 'Tahun bacaan' : 'Bulan bacaan'}</small><b>${period}</b>
+              <span class="wt-user">${RB.avatar(user, 'sm', false)}<span>${esc(user.name)}</span></span></div>
+          </div>
+        </div>
+        <div class="wt-cut" aria-hidden="true"></div>
+        <div class="wt-body">
+          <div class="wt-nums"><span><b>${st.count}</b><small>buku</small></span><span><b>${num(st.pages)}</b><small>halaman</small></span><span><b>${num(st.hours)}</b><small>jam baca</small></span></div>
+          <dl class="wt-rows">
+            <div><dt>Genre teratas</dt><dd>${st.genres[0] ? esc(st.genres[0][0]) : '–'}</dd></div>
+            <div><dt>Penulis favorit</dt><dd>${st.authors[0] ? esc(st.authors[0][0]) : '–'}</dd></div>
+            <div><dt>Buku terbaik</dt><dd>${st.top ? esc(st.top.b.title) : '–'}</dd></div>
+            <div><dt>Rating rata-rata</dt><dd>${st.avg ? st.avg.toFixed(1) + ' <i>★</i>' : '–'}</dd></div>
+          </dl>
+          <div class="wt-persona"><span class="wt-emoji">${st.persona[2]}</span><span><small>Persona baca</small><b>${st.persona[0]}</b></span></div>
+          <div class="wt-foot"><span class="wt-barcode" aria-hidden="true"></span><small>${SITE}</small></div>
+        </div>
+      </div></div>
       <div class="w-in d3 w-actions"><button class="btn primary" data-wrap="download">${ic('download')}Unduh gambar</button><button class="btn ghost" data-wrap="share">${ic('link')}Bagikan</button><button class="btn ghost" data-wrap="close">Selesai</button></div></div>`);
     return slides;
   }
@@ -242,7 +263,7 @@
         <div class="wp-bars">${slides.map(() => '<span><i></i></span>').join('')}</div>
         <button class="wp-close" data-wrap="close" aria-label="Tutup">${ic('x')}</button>
         <button class="wp-pause" data-wrap="pause" aria-label="Jeda"><span>❚❚</span></button>
-        <div class="wp-slides">${slides.map((s, i) => `<section class="wp-slide" style="background:${BG[i % BG.length]}" data-i="${i}">${s}</section>`).join('')}</div>
+        <div class="wp-slides">${slides.map((s, i) => `<section class="wp-slide th-${s.t}${DARK.has(s.t) ? ' dark' : ''}" data-i="${i}">${slideBg(s)}${s.html}</section>`).join('')}</div>
         <button class="wp-nav prev" data-wrap="prev" aria-label="Sebelumnya"></button><button class="wp-nav next" data-wrap="next" aria-label="Berikutnya"></button>
         <div class="wp-hint">Ketuk kanan/kiri untuk pindah · tahan untuk jeda</div>
       </div>`;
@@ -257,7 +278,7 @@
       if (i < 0) i = 0;
       if (i >= player.n) { close(); return; }
       player.i = i; player.elapsed = 0; player.t0 = performance.now();
-      $$('.wp-slide', root).forEach((s, k) => { s.classList.toggle('on', k === i); s.classList.toggle('past', k < i); });
+      $$('.wp-slide', root).forEach((s, k) => { s.classList.toggle('on', k === i); s.classList.toggle('past', k < i); if (k === i) root.classList.toggle('on-dark', s.classList.contains('dark')); });
       bars.forEach((b, k) => { b.style.width = k < i ? '100%' : '0%'; });
       $$('.wp-slide.on [data-count]', root).forEach(countUp);
       if (i === player.n - 1) window.FX.confetti();
@@ -341,48 +362,103 @@
     const ctx = c.getContext('2d');
     try { await document.fonts.ready; } catch (e) { /* abaikan */ }
     const serif = '"Fraunces", Georgia, serif', sans = '"Plus Jakarta Sans", system-ui, sans-serif';
-    const g = ctx.createLinearGradient(0, 0, W, H);
-    g.addColorStop(0, '#e0f2f4'); g.addColorStop(0.5, '#ffdbdf'); g.addColorStop(1, '#ffe797');
+    const ink = '#26343b', paper = '#fffaf2';
+    // latar: malam teal dengan cahaya warna-warni & bintik bintang
+    const g = ctx.createLinearGradient(0, 0, W * 0.4, H);
+    g.addColorStop(0, '#1d3439'); g.addColorStop(0.55, '#2b4c53'); g.addColorStop(1, '#3d2f45');
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-    [['#bad6da', 900, 260, 260], ['#dddd7b', 140, 1500, 220], ['#f791a9', 980, 1700, 180]].forEach(([col, x, y, r]) => { ctx.globalAlpha = 0.35; ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); });
+    const glow = (x, y, r, col) => { const rg = ctx.createRadialGradient(x, y, 0, x, y, r); rg.addColorStop(0, col); rg.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = rg; ctx.fillRect(x - r, y - r, r * 2, r * 2); };
+    glow(940, 180, 520, 'rgba(247,145,169,.55)'); glow(80, 900, 560, 'rgba(186,214,218,.38)'); glow(900, 1780, 600, 'rgba(255,231,151,.42)');
+    let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    for (let i = 0; i < 90; i++) { ctx.globalAlpha = 0.25 + rnd() * 0.6; ctx.fillStyle = i % 9 ? '#ffffff' : '#ffe797'; ctx.beginPath(); ctx.arc(rnd() * W, rnd() * H, 1 + rnd() * 2.6, 0, Math.PI * 2); ctx.fill(); }
     ctx.globalAlpha = 1;
-    const ink = '#26343b';
-    ctx.fillStyle = ink; ctx.font = `600 44px ${serif}`; ctx.fillText('ruangbaca', 90, 140);
-    ctx.font = `700 30px ${sans}`; ctx.fillStyle = '#4e7f87';
-    ctx.fillText('READING WRAP', 90, 230);
-    const period = st.month === null ? `${st.year}` : `${MONTHS[st.month]} ${st.year}`;
-    ctx.fillStyle = ink; ctx.font = `600 120px ${serif}`; ctx.fillText(period, 84, 360);
-    ctx.font = `500 40px ${sans}`; ctx.fillStyle = '#4a575e'; ctx.fillText(user.name, 90, 430);
-    const imgs = await Promise.all(st.books.slice(0, 5).map((b) => loadImg(window.API.coverOf(b))));
-    const nb = Math.min(5, st.books.length);
-    const cw = 170, ch = 255, gap = 22, x0 = (W - (cw * nb + gap * (nb - 1))) / 2;
-    st.books.slice(0, 5).forEach((b, i) => {
-      const x = x0 + i * (cw + gap), y = 500;
-      ctx.save(); ctx.shadowColor = 'rgba(38,52,59,.25)'; ctx.shadowBlur = 30; ctx.shadowOffsetY = 14;
-      rr(ctx, x, y, cw, ch, 10); ctx.fillStyle = RB.coverVars(b).p[1]; ctx.fill(); ctx.restore();
-      ctx.save(); rr(ctx, x, y, cw, ch, 10); ctx.clip();
-      if (imgs[i]) ctx.drawImage(imgs[i], x, y, cw, ch);
-      else { ctx.fillStyle = RB.coverVars(b).p[2]; ctx.font = `600 24px ${serif}`; wrapText(ctx, b.title, x + 16, y + 44, cw - 30, 28, 5); }
+
+    // tiket (digambar di kanvas terpisah supaya lubang sobekannya benar-benar bolong)
+    const TX = 70, TY = 130, TW = W - 140, TH = 1620, CUT = TY + 800;
+    const t = document.createElement('canvas'); t.width = W; t.height = H;
+    const tc = t.getContext('2d');
+    tc.fillStyle = paper; rr(tc, TX, TY, TW, TH, 46); tc.fill();
+    const tg = tc.createLinearGradient(0, TY, 0, CUT);
+    tg.addColorStop(0, '#ffdbdf'); tg.addColorStop(0.6, '#fff1e4'); tg.addColorStop(1, paper);
+    tc.save(); rr(tc, TX, TY, TW, CUT - TY, 46); tc.clip(); tc.fillStyle = tg; tc.fillRect(TX, TY, TW, CUT - TY); tc.restore();
+    tc.globalCompositeOperation = 'destination-out';
+    [TX, TX + TW].forEach((x) => { tc.beginPath(); tc.arc(x, CUT, 38, 0, Math.PI * 2); tc.fill(); });
+    tc.globalCompositeOperation = 'source-over';
+    tc.strokeStyle = 'rgba(38,52,59,.28)'; tc.lineWidth = 4; tc.setLineDash([16, 14]);
+    tc.beginPath(); tc.moveTo(TX + 60, CUT); tc.lineTo(TX + TW - 60, CUT); tc.stroke(); tc.setLineDash([]);
+    ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.35)'; ctx.shadowBlur = 60; ctx.shadowOffsetY = 24; ctx.drawImage(t, 0, 0); ctx.restore();
+
+    // kepala tiket
+    ctx.fillStyle = ink; ctx.font = `600 44px ${serif}`; ctx.fillText('ruangbaca', TX + 60, TY + 92);
+    ctx.font = `800 24px ${sans}`; const tag = 'READING WRAP'; const tw = ctx.measureText(tag).width + 48;
+    ctx.fillStyle = ink; rr(ctx, TX + TW - 60 - tw, TY + 52, tw, 54, 27); ctx.fill();
+    ctx.fillStyle = '#ffe797'; ctx.fillText(tag, TX + TW - 36 - tw, TY + 88);
+
+    // tumpukan sampul
+    const books = summaryBooks(st).slice(0, 3);
+    const imgs = await Promise.all(books.map((b) => loadImg(window.API.coverOf(b))));
+    const cw = 230, ch = 345, cx = W / 2, cy = TY + 175;
+    const order = books.length === 3 ? [1, 2, 0] : books.map((_, i) => i);
+    order.forEach((i) => {
+      const b = books[i];
+      const k = books.length === 3 ? [0, -1, 1][i] : books.length === 2 ? [-0.6, 0.6][i] : 0;
+      ctx.save(); ctx.translate(cx + k * 190, cy + ch / 2 + Math.abs(k) * 28); ctx.rotate(k * 0.16);
+      const s = i === 0 ? 1.08 : 0.94; ctx.scale(s, s);
+      ctx.shadowColor = 'rgba(38,52,59,.35)'; ctx.shadowBlur = 36; ctx.shadowOffsetY = 18;
+      rr(ctx, -cw / 2, -ch / 2, cw, ch, 12); ctx.fillStyle = RB.coverVars(b).p[1]; ctx.fill(); ctx.shadowColor = 'transparent';
+      rr(ctx, -cw / 2, -ch / 2, cw, ch, 12); ctx.clip();
+      if (imgs[i]) ctx.drawImage(imgs[i], -cw / 2, -ch / 2, cw, ch);
+      else { ctx.fillStyle = RB.coverVars(b).p[2]; ctx.font = `600 28px ${serif}`; wrapText(ctx, b.title, -cw / 2 + 20, -ch / 2 + 54, cw - 36, 32, 6); }
       ctx.restore();
     });
-    const cells = [['Buku', String(st.count)], ['Halaman', num(st.pages)], ['Jam membaca', `≈ ${st.hours}`], ['Rating rata-rata', st.avg ? st.avg.toFixed(1) + ' ★' : '–']];
-    cells.forEach(([k, v], i) => {
-      const x = 90 + (i % 2) * 460, y = 870 + Math.floor(i / 2) * 200;
-      ctx.fillStyle = 'rgba(255,255,255,.62)'; rr(ctx, x, y, 440, 170, 28); ctx.fill();
-      ctx.fillStyle = '#7d878c'; ctx.font = `600 28px ${sans}`; ctx.fillText(k.toUpperCase(), x + 34, y + 58);
-      ctx.fillStyle = ink; ctx.font = `600 66px ${serif}`; ctx.fillText(v, x + 34, y + 135);
+
+    // periode & nama
+    const period = st.month === null ? `${st.year}` : `${MONTHS[st.month]} ${st.year}`;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#9a6a74'; ctx.font = `800 26px ${sans}`; ctx.fillText((st.month === null ? 'TAHUN BACAAN' : 'BULAN BACAAN'), W / 2, TY + 620);
+    ctx.fillStyle = ink; ctx.font = `600 ${period.length > 8 ? 104 : 136}px ${serif}`; ctx.fillText(period, W / 2, TY + 730);
+    ctx.fillStyle = '#4a575e'; ctx.font = `600 36px ${sans}`; ctx.fillText(user.name, W / 2, TY + 776);
+
+    // angka besar
+    const nums = [[String(st.count), 'BUKU'], [num(st.pages), 'HALAMAN'], [num(st.hours), 'JAM BACA']];
+    const colW = (TW - 120) / 3;
+    nums.forEach(([v, k], i) => {
+      const x = TX + 60 + colW * i + colW / 2;
+      ctx.fillStyle = ink; ctx.font = `600 92px ${serif}`; ctx.fillText(v, x, CUT + 150);
+      ctx.fillStyle = '#7d878c'; ctx.font = `800 24px ${sans}`; ctx.fillText(k, x, CUT + 196);
+      if (i) { ctx.fillStyle = 'rgba(38,52,59,.12)'; ctx.fillRect(TX + 60 + colW * i - 1, CUT + 80, 2, 130); }
     });
-    let y = 1330;
-    ctx.fillStyle = '#7d878c'; ctx.font = `700 28px ${sans}`; ctx.fillText('GENRE TERATAS', 90, y);
-    ctx.fillText('PENULIS FAVORIT', 560, y);
-    ctx.fillStyle = ink; ctx.font = `500 36px ${sans}`;
-    st.genres.slice(0, 3).forEach(([gname], i) => ctx.fillText(`${i + 1}. ${gname}`, 90, y + 60 + i * 52));
-    st.authors.slice(0, 3).forEach(([a], i) => { ctx.save(); ctx.beginPath(); ctx.rect(560, y + 20 + i * 52, 440, 60); ctx.clip(); ctx.fillText(`${i + 1}. ${a}`, 560, y + 60 + i * 52); ctx.restore(); });
-    y = 1610;
-    ctx.fillStyle = '#26343b'; rr(ctx, 90, y, 900, 180, 34); ctx.fill();
-    ctx.fillStyle = '#e0f2f4'; ctx.font = `700 26px ${sans}`; ctx.fillText('PERSONA BACA', 134, y + 62);
-    ctx.fillStyle = '#ffffff'; ctx.font = `600 54px ${serif}`; ctx.fillText(`${st.persona[2]} ${st.persona[0]}`, 134, y + 132);
-    ctx.fillStyle = '#4a575e'; ctx.font = `500 26px ${sans}`; ctx.fillText('ruangbaca — catat, nilai, dan bagikan bacaanmu', 90, 1870);
+    ctx.textAlign = 'left';
+
+    // baris info 2×2
+    const rows = [['GENRE TERATAS', st.genres[0] ? st.genres[0][0] : '–'], ['PENULIS FAVORIT', st.authors[0] ? st.authors[0][0] : '–'],
+      ['BUKU TERBAIK', st.top ? st.top.b.title : '–'], ['RATING RATA-RATA', st.avg ? st.avg.toFixed(1) + ' ★' : '–']];
+    rows.forEach(([k, v], i) => {
+      const x = TX + 60 + (i % 2) * ((TW - 120) / 2 + 10), y = CUT + 260 + Math.floor(i / 2) * 130, w = (TW - 120) / 2 - 10;
+      ctx.fillStyle = 'rgba(224,242,244,.7)'; rr(ctx, x, y, w, 112, 24); ctx.fill();
+      ctx.fillStyle = '#6d8a8f'; ctx.font = `800 21px ${sans}`; ctx.fillText(k, x + 28, y + 42);
+      ctx.fillStyle = ink; ctx.font = `600 34px ${serif}`;
+      ctx.save(); ctx.beginPath(); ctx.rect(x + 20, y + 48, w - 40, 60); ctx.clip();
+      let s = v; if (ctx.measureText(s).width > w - 56) { while (ctx.measureText(s + '…').width > w - 56 && s.length > 3) s = s.includes(' ') ? s.slice(0, s.lastIndexOf(' ')) : s.slice(0, -1); s = s.replace(/[\s,.:;–-]+$/, '') + '…'; }
+      ctx.fillText(s, x + 28, y + 90); ctx.restore();
+    });
+
+    // persona
+    const py = CUT + 530;
+    const pg = ctx.createLinearGradient(TX + 60, 0, TX + TW - 60, 0); pg.addColorStop(0, '#26343b'); pg.addColorStop(1, '#4e3a52');
+    ctx.fillStyle = pg; rr(ctx, TX + 60, py, TW - 120, 150, 34); ctx.fill();
+    ctx.font = `76px ${sans}`; ctx.fillText(st.persona[2], TX + 96, py + 102);
+    ctx.fillStyle = '#ffdbdf'; ctx.font = `800 22px ${sans}`; ctx.fillText('PERSONA BACA', TX + 210, py + 58);
+    ctx.fillStyle = '#ffffff'; ctx.font = `600 48px ${serif}`; ctx.fillText(st.persona[0], TX + 210, py + 114);
+
+    // kode batang & alamat
+    const by = CUT + 712;
+    let bx = TX + 60; seed = 3;
+    while (bx < TX + 470) { const w = 2 + Math.floor(rnd() * 3) * 2; ctx.fillStyle = ink; ctx.fillRect(bx, by, w, 50); bx += w + 3 + Math.floor(rnd() * 3) * 2; }
+    ctx.textAlign = 'right'; ctx.fillStyle = '#4a575e'; ctx.font = `700 30px ${sans}`; ctx.fillText(SITE, TX + TW - 60, by + 36); ctx.textAlign = 'left';
+
+    ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.font = `500 30px ${sans}`;
+    ctx.fillText('Catat, nilai, dan bagikan bacaanmu ✦', W / 2, TY + TH + 96); ctx.textAlign = 'left';
     return new Promise((res) => {
       try { c.toBlob((b) => res(b), 'image/png'); }
       catch (e) {

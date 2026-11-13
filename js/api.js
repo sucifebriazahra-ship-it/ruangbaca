@@ -242,6 +242,8 @@
       queued.add(book.id); queue.unshift(book); pump();
     },
     onCover(fn) { listeners.add(fn); },
+    /** lupakan hasil pencarian sampul otomatis (dipakai saat admin mengembalikan ke otomatis) */
+    forget(id) { delete meta[id]; delete failedAt[id]; persist(); },
 
     /** pencarian global: judul / penulis / penerbit / ISBN, dari Open Library + Google Books */
     async searchWorld(q, { limit = 24 } = {}) {

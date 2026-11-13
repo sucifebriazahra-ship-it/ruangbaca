@@ -51,6 +51,7 @@
     bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
     book: '<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>',
     check: '<path d="M20 6 9 17l-5-5"/>',
+    copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
     x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>',
     moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
@@ -161,12 +162,26 @@
     return [...score.entries()].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).map(([id, v]) => ({ b: getBook(id), v })).filter((x) => x.b);
   }
   const popularBooks = () => books().slice().sort((a, b) => communityScore(b) - communityScore(a) || (a.rank || 9999) - (b.rank || 9999));
+  /** pencarian lokal: tiap kata boleh di mana saja (urutan bebas, tanda baca diabaikan),
+      hasil diurutkan dari yang paling cocok — judul persis > awal judul > isi judul > penulis */
+  const sNorm = (s) => norm(s).replace(/[^a-z0-9]+/g, ' ').trim();
   function searchBooks(q) {
-    const n = norm(q.trim());
+    const n = sNorm(q);
     if (!n) return books().slice();
     const isbn = window.API.cleanIsbn(q);
     if (isbn) return books().filter((b) => window.API.sameIsbn(b.isbn || window.API.metaOf(b).isbn, isbn));
-    return books().filter((b) => norm(`${b.title} ${b.author} ${b.publisher || ''} ${(b.genres || []).join(' ')}`).includes(n));
+    const toks = n.split(' ');
+    const hits = [];
+    books().forEach((b) => {
+      const t = sNorm(b.title), a = sNorm(b.author);
+      const hay = `${t} ${a} ${sNorm(b.publisher)} ${sNorm((b.genres || []).join(' '))}`;
+      if (!toks.every((k) => hay.includes(k))) return;
+      const ta = `${t} ${a}`;
+      const sc = t === n ? 100 : t.startsWith(n) ? 85 : t.includes(n) ? 70 : toks.every((k) => t.includes(k)) ? 60
+        : a === n || a.includes(n) ? 45 : toks.every((k) => ta.includes(k)) ? 35 : 10;
+      hits.push([b, sc]);
+    });
+    return hits.sort((x, y) => y[1] - x[1] || communityScore(y[0]) - communityScore(x[0]) || (x[0].rank || 9999) - (y[0].rank || 9999)).map((h) => h[0]);
   }
   function searchUsers(q) {
     const n = norm(q.trim().replace(/^@/, ''));
@@ -849,7 +864,7 @@
   /* ===================== jelajah ===================== */
   const exploreHref = (o) => '#/jelajah?' + new URLSearchParams(Object.entries(o).filter(([, v]) => v)).toString();
   function viewExplore(_, q) {
-    const query = q.q || '', genre = q.genre || '', sort = q.sort || 'populer';
+    const query = q.q || '', genre = q.genre || '', sort = q.sort || (query && !window.API.cleanIsbn(query) ? 'cocok' : 'populer');
     setTitle(query ? `Cari “${query}”` : 'Jelajah');
     let list = searchBooks(query);
     const matchAuthors = query.length >= 3 && !window.API.cleanIsbn(query) ? [...new Set(books().map((b) => String(b.author).split(/\s*&\s*/)[0]).filter((a) => norm(a).includes(norm(query))))].slice(0, 4) : [];
@@ -862,7 +877,7 @@
       terlama: (a, b) => (a.year || 9999) - (b.year || 9999),
       judul: (a, b) => a.title.localeCompare(b.title, 'id'),
     };
-    list.sort(sorters[sort] || sorters.populer);
+    if (sort !== 'cocok' || !query) list.sort(sorters[sort] || sorters.populer); // 'cocok' = urutan relevansi dari searchBooks
     const people = searchUsers(query);
     onMount(() => {
       $('#exploreForm').addEventListener('submit', (e) => { e.preventDefault(); go(exploreHref({ q: e.target.q.value.trim(), genre, sort })); });
@@ -959,7 +974,7 @@
     <section class="wrap explore-bar">
       <form id="exploreForm" class="explore-search">${ic('search')}<input name="q" class="input" value="${esc(query)}" placeholder="Judul, penulis, penerbit, atau ISBN (978…)" autocomplete="off"><button type="button" class="scan-btn" data-action="scan-isbn" title="Scan barcode ISBN">${ic('barcode')}<span>Scan ISBN</span></button></form>
       <label class="sort"><span class="muted sm">Urutkan</span><select id="sortSel" class="input sm">
-        ${[['populer', 'Terpopuler'], ['rating', 'Rating komunitas'], ['terbaru', 'Terbit terbaru'], ['terlama', 'Terbit terlama'], ['judul', 'Judul A–Z']].map(([v, l]) => `<option value="${v}" ${v === sort ? 'selected' : ''}>${l}</option>`).join('')}
+        ${[...(query ? [['cocok', 'Paling cocok']] : []), ['populer', 'Terpopuler'], ['rating', 'Rating komunitas'], ['terbaru', 'Terbit terbaru'], ['terlama', 'Terbit terlama'], ['judul', 'Judul A–Z']].map(([v, l]) => `<option value="${v}" ${v === sort ? 'selected' : ''}>${l}</option>`).join('')}
       </select></label>
       <a href="#/trending" class="btn ghost">${ic('flame')}Trending</a>
       <button class="btn ghost" data-action="add-book">${ic('plus')}Tambah buku</button>
@@ -1081,6 +1096,7 @@
           <span title="${st.likes} orang menyukai" class="ms like">${ic('heart')}${st.likes}</span>
           <span title="Ada di ${inLists.length} daftar" class="ms list">${ic('list')}${inLists.length}</span>
         </div>
+        ${u && u.is_admin ? `<button class="cover-admin" data-action="edit-cover" data-book="${bid}">${ic('image')}${window.API.coverOf(b) ? 'Ganti sampul' : 'Tambah sampul'}<small>admin</small></button>` : ''}
       </div>
       <div class="book-main">
        <div class="book-info">
@@ -1195,8 +1211,9 @@
     const m = me(), own = m && m.id === p.id;
     setTitle(`${p.name} (@${p.username})`);
     const year = new Date().getFullYear();
-    const reads = S.where('user_books', (r) => r.user_id === p.id && r.status === 'read').length;
-    const thisYear = yearEntries(p.id, year).length;
+    const diaryAll = S.where('diary_entries', (e) => e.user_id === p.id);
+    const reads = new Set([...S.where('user_books', (r) => r.user_id === p.id && r.status === 'read').map((r) => r.book_id), ...diaryAll.map((e) => e.book_id)]).size;
+    const thisYear = new Set(yearEntries(p.id, year).map((e) => e.book_id)).size;
     const lists = S.where('lists', (l) => l.user_id === p.id);
     const following = followingIds(p.id), followers = followerIds(p.id);
     const shop = S.where('listings', (l) => l.seller_id === p.id && l.status !== 'sold').length;
@@ -1207,25 +1224,46 @@
       suka: () => profLikes(p), statistik: () => profStats(p, Number(q.y) || year), jaringan: () => profNetwork(p),
     }[tab] || (() => profOverview(p, own));
     const joined = new Date(p.created_at);
+    const favs = favoritesOf(p.id).map((f) => getBook(f.book_id)).filter(Boolean);
+    const mine = [...favs, ...diaryAll.slice().sort(byCreatedDesc).map((e) => getBook(e.book_id)),
+      ...S.where('user_books', (r) => r.user_id === p.id).map((r) => getBook(r.book_id))].filter(Boolean);
+    const seen = new Set();
+    const uniq = [...mine, ...familiarPool()].filter((b) => !seen.has(b.id) && seen.add(b.id));
+    const { ready: wall } = coverReady(uniq, 18, 40);
+    const bannerBooks = wall.length ? Array.from({ length: 18 }, (_, k) => wall[k % wall.length]) : [];
+    const stat = (href, n, label, icn) => `<a href="${href}" class="ph2-stat">${ic(icn)}<b>${num(n)}</b><span>${label}</span></a>`;
+    const handle = `@${esc(p.username)}`;
     return `
-    <section class="profile-head" style="--av:${esc(p.avatar_color || '#7fa9b0')}">
-      <div class="wrap ph-inner lib-card">
-        <span class="lib-tag" aria-hidden="true">Kartu Anggota ruangbaca <i>No. ${String(p.id).replace(/[^0-9a-z]/gi, '').slice(-6).toUpperCase().padStart(6, '0')}</i></span>
-        <span class="lib-stamp" aria-hidden="true">${joined.getFullYear()}</span>
-        ${avatar(p, 'xl', false)}
-        <div class="ph-info">
-          <h1 class="display sm">${esc(p.name)}</h1>
-          <p class="muted">@${esc(p.username)}${p.location ? ` · ${ic('pin')}${esc(p.location)}` : ''} · Bergabung ${MONTHS[joined.getMonth()]} ${joined.getFullYear()}${p.provider === 'google' ? ' · <span class="g-badge">' + GOOGLE + 'Google</span>' : ''}</p>
-          ${p.bio ? `<p class="ph-bio">${esc(p.bio)}</p>` : ''}
-          ${p.website ? `<p class="ph-web">${ic('link')}<a href="${esc(/^https?:/.test(p.website) ? p.website : 'https://' + p.website)}" target="_blank" rel="noopener nofollow">${esc(p.website.replace(/^https?:\/\//, ''))}</a></p>` : ''}
-          <div class="ph-actions">${own ? `<a href="#/pengaturan" class="btn ghost sm">${ic('edit')}Edit profil</a><a href="#/wrap" class="btn primary sm">${ic('gift')}Reading Wrap</a>` : `${followBtn(p)}${m && isFollowing(p.id, m.id) ? '<span class="follows-you">Mengikutimu</span>' : ''}`}</div>
-        </div>
-        <div class="ph-stats">
-          <a href="#/u/${esc(p.username)}/rak"><b>${reads}</b><span>Buku</span></a>
-          <a href="#/u/${esc(p.username)}/diary"><b>${thisYear}</b><span>Tahun ini</span></a>
-          <a href="#/u/${esc(p.username)}/lapak"><b>${shop}</b><span>Lapak</span></a>
-          <a href="#/u/${esc(p.username)}/jaringan"><b>${following.length}</b><span>Mengikuti</span></a>
-          <a href="#/u/${esc(p.username)}/jaringan"><b>${followers.length}</b><span>Pengikut</span></a>
+    <section class="profile-head ph2" style="--av:${esc(p.avatar_color || '#7fa9b0')}">
+      <div class="ph2-banner" aria-hidden="true">
+        <div class="ph2-covers">${bannerBooks.map((b, k) => `<span style="--k:${k}">${cover(b, { link: false })}</span>`).join('')}</div>
+      </div>
+      <div class="wrap">
+        <div class="ph2-card">
+          <div class="ph2-top">
+            <div class="ph2-avatar">${avatar(p, 'xl', false)}<span class="ph2-since" title="Anggota sejak ${joined.getFullYear()}">${ic('book')}${joined.getFullYear()}</span></div>
+            <div class="ph2-info">
+              <h1 class="ph2-name">${esc(p.name)}</h1>
+              <div class="ph2-meta">
+                <span class="ph2-chip handle">${handle}</span>
+                ${p.location ? `<span class="ph2-chip">${ic('pin')}${esc(p.location)}</span>` : ''}
+                <span class="ph2-chip">${ic('calendar')}Bergabung ${MONTHS[joined.getMonth()]} ${joined.getFullYear()}</span>
+                ${p.provider === 'google' ? `<span class="ph2-chip">${GOOGLE}Google</span>` : ''}
+                ${m && !own && isFollowing(p.id, m.id) ? '<span class="ph2-chip soft">Mengikutimu</span>' : ''}
+              </div>
+              ${p.bio ? `<p class="ph2-bio">${esc(p.bio)}</p>` : own ? '<p class="ph2-bio muted"><a href="#/pengaturan">+ Tambahkan bio singkat tentang selera bacamu</a></p>' : ''}
+              ${p.website ? `<p class="ph-web">${ic('link')}<a href="${esc(/^https?:/.test(p.website) ? p.website : 'https://' + p.website)}" target="_blank" rel="noopener nofollow">${esc(p.website.replace(/^https?:\/\//, ''))}</a></p>` : ''}
+              <div class="ph-actions">${own ? `<a href="#/pengaturan" class="btn ghost sm">${ic('edit')}Edit profil</a><a href="#/wrap" class="btn primary sm">${ic('gift')}Reading Wrap</a>` : `${followBtn(p)}${m ? `<button class="btn ghost sm" data-action="share-profile" data-user="${esc(p.username)}">${ic('link')}Bagikan</button>` : ''}`}</div>
+            </div>
+            ${favs.length ? `<div class="ph2-favs"><p class="ph2-label">${ic('heart')}Favorit sepanjang masa</p><div class="ph2-fav-row">${favs.slice(0, 4).map((b) => `<a href="#/buku/${encodeURIComponent(b.id)}" title="${esc(b.title)}">${cover(b, { link: false })}</a>`).join('')}</div></div>` : ''}
+          </div>
+          <div class="ph2-stats">
+            ${stat(`#/u/${esc(p.username)}/rak`, reads, 'Buku dibaca', 'book')}
+            ${stat(`#/u/${esc(p.username)}/diary`, thisYear, `Di ${year}`, 'calendar')}
+            ${stat(`#/u/${esc(p.username)}/lapak`, shop, 'Lapak', 'bag')}
+            ${stat(`#/u/${esc(p.username)}/jaringan`, following.length, 'Mengikuti', 'users')}
+            ${stat(`#/u/${esc(p.username)}/jaringan`, followers.length, 'Pengikut', 'heart')}
+          </div>
         </div>
       </div>
       <nav class="wrap tabs">${tabs.map(([k, l]) => `<a href="#/u/${esc(p.username)}/${k}" class="${k === tab ? 'on' : ''}">${l}</a>`).join('')}</nav>
@@ -1564,6 +1602,32 @@
       const rows = P.slice().sort(byCreatedDesc).map((p) => { const a = byId.get(p.id) || {}; return `<tr><td><div class="ad-user">${avatar(p, 'sm')}<span><b>${esc(p.name)}</b><small>@${esc(p.username)}${p.is_admin ? ' · admin' : ''}</small></span></div></td><td>${esc(a.email || '—')}</td><td>${(a.provider || p.provider) === 'google' ? GOOGLE + ' Google' : ic('mail') + ' Email'}</td><td>${fmtDate(p.created_at)}</td><td>${a.last_sign_in_at ? timeAgo(a.last_sign_in_at) : '—'}</td><td>${S.where('diary_entries', (e) => e.user_id === p.id).length}</td></tr>`; }).join('');
       el.innerHTML = `<div class="table-wrap"><table class="admin-table"><thead><tr><th>Pengguna</th><th>Email</th><th>Login via</th><th>Bergabung</th><th>Terakhir masuk</th><th>Catatan</th></tr></thead><tbody>${rows}</tbody></table></div>`;
     });
+    onMount(() => {
+      const box = $('#adminCovers');
+      if (!box) return;
+      let f = 'no', q = '';
+      const all = books();
+      const isNo = (b) => window.API.coverState(b) === 'no';
+      const isCustom = (b) => isAdminCover(b.cover_url);
+      const draw = () => {
+        const nq = q.trim().toLowerCase();
+        let list = all.filter((b) => (f === 'no' ? isNo(b) : f === 'custom' ? isCustom(b) : true));
+        if (nq) list = list.filter((b) => `${b.title} ${b.author} ${b.isbn || ''}`.toLowerCase().includes(nq));
+        list.sort((a, c) => (a.rank || 999) - (c.rank || 999) || String(a.title).localeCompare(c.title));
+        $$('.ac-seg button', box).forEach((x) => { x.classList.toggle('on', x.dataset.f === f); const n = x.querySelector('b'); if (n) n.textContent = num(all.filter(x.dataset.f === 'no' ? isNo : x.dataset.f === 'custom' ? isCustom : () => true).length); });
+        const grid = $('#acGrid', box);
+        grid.innerHTML = list.slice(0, 60).map((b) => `<button class="ac-item" data-action="edit-cover" data-book="${esc(b.id)}"><span class="ac-cv">${cover(b, { link: false })}${isCustom(b) ? '<span class="ac-tag">admin</span>' : ''}<span class="ac-go">${ic('image')}${window.API.coverOf(b) ? 'Ganti' : 'Tambah'}</span></span><b>${esc(b.title)}</b><small>${esc(b.author)}</small></button>`).join('')
+          || `<p class="muted sm">${f === 'no' ? (nq ? 'Tidak ada yang cocok.' : 'Semua buku yang sudah dicek punya sampul 🎉 Buku yang belum dicek akan muncul di sini setelah sampulnya dicari.') : 'Tidak ada buku.'}</p>`;
+        if (list.length > 60) grid.insertAdjacentHTML('beforeend', `<p class="muted sm" style="grid-column:1/-1">Menampilkan 60 dari ${num(list.length)} — persempit dengan pencarian.</p>`);
+        hydrateCovers(grid);
+      };
+      box.addEventListener('click', (e) => { const x = e.target.closest('.ac-seg button'); if (x) { f = x.dataset.f; draw(); } });
+      $('#acQ', box).addEventListener('input', (e) => { q = e.target.value; draw(); });
+      all.forEach((b) => window.API.queueCover(b));
+      draw();
+      let t = null;
+      window.API.onCover(() => { if (!document.contains(box)) return; clearTimeout(t); t = setTimeout(draw, 600); });
+    });
     const recentRev = S.where('diary_entries', (e) => e.review).sort(byCreatedDesc).slice(0, 8);
     const recentList = S.table('listings').slice().sort(byCreatedDesc).slice(0, 8);
     return `<section class="wrap page-head"><p class="eyebrow">${ic('shield')} Admin</p><h1 class="display sm">Dasbor ruangbaca</h1>
@@ -1571,9 +1635,58 @@
     <section class="wrap"><div class="admin-stats">${stats.map(([l, v, s, i]) => `<div class="stat-card">${ic(i)}<b>${num(v)}</b><span>${l}</span><small>${s}</small></div>`).join('')}</div></section>
     <section class="wrap">${secHead('Semua pengguna', '', 'users')}<div id="adminUsers" class="card flush"><p class="pad muted">Memuat…</p></div>
       <div class="info-box">${ic('info')}<div><b>Cara lain melihat pengguna:</b> buka <i>Supabase Dashboard → Authentication → Users</i>. Di sana terlihat email, metode login (email/Google), waktu daftar, dan terakhir masuk. Data profil ada di <i>Table Editor → profiles</i>.</div></div></section>
+    <section class="wrap" id="adminCovers">${secHead('Sampul buku', '', 'image')}
+      <p class="muted sm">Tambah sampul untuk buku yang belum punya, atau ganti sampul yang salah / edisi lama. Ketuk buku untuk mengubah — bisa unggah foto, tempel tautan gambar, atau pilih dari saran Open Library &amp; Google Books.</p>
+      <div class="card"><div class="ac-bar"><div class="ac-seg"><button data-f="no" class="on">Tanpa sampul<b></b></button><button data-f="custom">Diganti admin<b></b></button><button data-f="all">Semua<b></b></button></div>
+        <input class="input" id="acQ" type="search" placeholder="Cari judul, penulis, ISBN…"></div>
+        <div class="ac-grid" id="acGrid"></div></div></section>
     <section class="wrap two-col">
       <div class="card">${secHead('Ulasan terbaru (moderasi)', '', 'message')}${recentRev.map((e) => { const u = getUser(e.user_id), b = getBook(e.book_id); return `<div class="mod-row"><span><b>${esc(u?.name)}</b> → ${esc(b?.title)}<small>${esc(e.review.slice(0, 90))}</small></span><button class="icon-btn sm" data-action="delete-entry" data-entry="${e.id}" title="Hapus">${ic('trash')}</button></div>`; }).join('') || '<p class="muted sm">Belum ada.</p>'}</div>
       <div class="card">${secHead('Lapak terbaru (moderasi)', '', 'bag')}${recentList.map((l) => { const u = getUser(l.seller_id), b = getBook(l.book_id); return `<div class="mod-row"><span><a href="#/preloved/${l.id}"><b>${esc(b?.title)}</b></a> · ${rupiah(l.price)}<small>${esc(u?.name)} · ${timeAgo(l.created_at)}</small></span><button class="icon-btn sm" data-action="delete-listing" data-id="${l.id}" title="Hapus">${ic('trash')}</button></div>`; }).join('') || '<p class="muted sm">Belum ada.</p>'}</div>
+    </section>`;
+  }
+
+  /* ---------- tentang & kontak ---------- */
+  const CONTACTS = ['sucifebriazahra@gmail.com', 'yasminrqrabani@gmail.com'];
+  function viewContact() {
+    setTitle('Kontak');
+    const u = me();
+    const topics = ['Saran & masukan', 'Laporan bug / error', 'Buku tidak ditemukan', 'Kerja sama', 'Lainnya'];
+    onMount(() => {
+      const f = $('#contactForm'); if (!f) return;
+      f.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const name = f.cname.value.trim(), from = f.cmail.value.trim(), topic = f.topic.value, msg = f.msg.value.trim();
+        if (msg.length < 5) { $('#contactErr').textContent = 'Tulis pesanmu dulu, ya.'; return; }
+        $('#contactErr').textContent = '';
+        const subject = `[ruangbaca] ${topic}${name ? ' — ' + name : ''}`;
+        const body = `${msg}\n\n—\nDari: ${name || '-'}${from ? ' <' + from + '>' : ''}${u ? '\nAkun ruangbaca: @' + u.username : ''}\nDikirim dari ${location.origin}`;
+        location.href = `mailto:${CONTACTS.join(',')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+        toast('Membuka aplikasi email… Kalau tidak terbuka, kirim langsung ke alamat di samping.', 'muted');
+      });
+    });
+    return `
+    <section class="wrap page-head contact-head"><p class="eyebrow">${ic('mail')} Tentang &amp; kontak</p>
+      <h1 class="display sm">Ada cerita untuk kami?</h1>
+      <p class="muted">ruangbaca adalah rak buku sosial untuk pembaca Indonesia — tempat mencatat bacaan, menulis ulasan, dan berbagi buku preloved. Punya saran, menemukan error, atau mau bekerja sama? Kirim pesan ke tim kami.</p></section>
+    <section class="wrap contact-grid">
+      <div class="contact-card letter">
+        <p class="label">${ic('send')} Kirim pesan</p>
+        <form id="contactForm" class="form" novalidate>
+          <div class="field-row"><label class="field"><span>Nama</span><input class="input" name="cname" maxlength="80" value="${esc(u ? u.name || '' : '')}" placeholder="Nama kamu"></label>
+          <label class="field"><span>Email kamu <i class="muted">(opsional)</i></span><input class="input" type="email" name="cmail" maxlength="120" placeholder="nama@email.com"></label></div>
+          <label class="field"><span>Topik</span><select class="input" name="topic">${topics.map((t) => `<option>${esc(t)}</option>`).join('')}</select></label>
+          <label class="field"><span>Pesan</span><textarea class="input" name="msg" rows="6" maxlength="3000" placeholder="Tulis pesanmu di sini…"></textarea></label>
+          <p class="form-err" id="contactErr"></p>
+          <button class="btn primary">${ic('send')}Kirim lewat email</button>
+          <p class="muted xs">Tombol ini membuka aplikasi email di perangkatmu dengan pesan yang sudah terisi.</p>
+        </form>
+      </div>
+      <aside class="contact-side">
+        <p class="label">${ic('mail')} Email tim ruangbaca</p>
+        ${CONTACTS.map((m) => `<div class="contact-mail"><a href="mailto:${m}">${ic('mail')}<span>${m}</span></a><button class="icon-btn" data-action="copy-text" data-text="${m}" title="Salin alamat">${ic('copy')}</button></div>`).join('')}
+        <p class="muted xs">Biasanya kami membalas dalam 1–3 hari.</p>
+      </aside>
     </section>`;
   }
 
@@ -1728,7 +1841,7 @@
       const q = input.value.trim();
       const my = ++seq;
       if (!q && !always) { out.innerHTML = ''; out.classList.remove('open'); return; }
-      const local = searchBooks(q).sort((a, b) => communityScore(b) - communityScore(a) || (a.rank || 999) - (b.rank || 999)).slice(0, q ? 6 : 8);
+      const local = (q ? searchBooks(q) : searchBooks(q).sort((a, b) => communityScore(b) - communityScore(a) || (a.rank || 999) - (b.rank || 999))).slice(0, q ? 6 : 8);
       out.innerHTML = local.map((b) => item(b)).join('') + (q.length >= 3 ? `<div class="pick-world" data-world-slot><p class="sp-label">${ic('globe')} Mencari di katalog dunia…</p></div>` : '') + (!local.length && q.length < 3 ? '<p class="muted sm pad">Ketik minimal 3 huruf, atau ISBN, untuk mencari di katalog dunia.</p>' : '')
         + `<div class="pick-extra"><button type="button" data-extra="scan">${ic('barcode')}Scan ISBN</button><button type="button" data-extra="add">${ic('plus')}Tidak ketemu? Tambah buku</button></div>`;
       out.classList.add('open');
@@ -2092,6 +2205,113 @@
   }
   const baseUrl = () => location.href.split('#')[0];
 
+  /* ===================== admin: ganti / tambah sampul ===================== */
+  const ADMIN_MARK = '#rb-admin';
+  const isAdminCover = (u) => typeof u === 'string' && (u.includes(ADMIN_MARK) || u.startsWith('data:'));
+  const probeImg = (url, ms = 9000) => new Promise((res) => {
+    const im = new Image(); let done = false;
+    const end = (ok) => { if (!done) { done = true; res(ok && im.naturalWidth > 40 ? { w: im.naturalWidth, h: im.naturalHeight } : null); } };
+    im.referrerPolicy = 'no-referrer'; im.onload = () => end(true); im.onerror = () => end(false);
+    setTimeout(() => end(false), ms); im.src = url;
+  });
+  function setBookCover(b, url) {
+    S.pushBook(b.id);
+    S.update('books', b.id, { cover_url: url });
+    if (!url) { window.API.forget(b.id); const nb = getBook(b.id); if (nb) window.API.enrich(nb); }
+  }
+  function openCoverEditor(bookId) {
+    const m = me();
+    if (!m || !m.is_admin) { toast('Fitur ini khusus admin.', 'muted'); return; }
+    const b = getBook(bookId);
+    if (!b) { ensureBook(bookId).then(() => openCoverEditor(bookId)).catch(() => toast('Buku tidak ditemukan', 'err')); return; }
+    const cur = window.API.coverOf(b);
+    const q = encodeURIComponent(`${b.title} ${b.author}`);
+    openModal(`<div class="ce">
+      <div><h2 class="modal-title">${ic('image')} ${cur ? 'Ganti sampul' : 'Tambah sampul'}</h2><p class="muted sm">${esc(b.title)} — ${esc(b.author)} · <b>khusus admin</b></p></div>
+      <div class="ce-compare">
+        <figure>${cur ? cover(b, { link: false }) : `<span class="cover ce-empty">${ic('image')}<span>Belum ada<br>sampul</span></span>`}<figcaption>Sekarang</figcaption></figure>
+        <span class="ce-arrow">→</span>
+        <figure><span class="cover ce-empty" id="cePrev">${ic('sparkle')}<span>Pilih sampul<br>baru</span></span><figcaption>Baru</figcaption></figure>
+      </div>
+      <label class="ce-drop" id="ceDrop">${ic('camera')}<span><b>Unggah foto sampul</b><small>JPG / PNG / WebP — dari galeri atau kamera. Bisa juga seret ke sini.</small></span><input type="file" id="ceFile" accept="image/*" hidden></label>
+      <div class="ce-url"><input class="input" id="ceUrl" type="url" inputmode="url" placeholder="…atau tempel tautan gambar"><button class="btn ghost sm" id="ceUrlBtn" type="button">Pakai</button></div>
+      <p class="ce-sec"><span>Saran dari katalog dunia</span></p>
+      <div class="ce-cands" id="ceCands"><p class="muted sm">${ic('globe')} Mencari sampul di Open Library &amp; Google Books…</p></div>
+      <div class="ce-links"><span class="muted">Cari manual:</span>
+        <a href="https://www.google.com/search?tbm=isch&q=${encodeURIComponent(`sampul buku ${b.title} ${b.author}`)}" target="_blank" rel="noopener">Google Gambar</a>
+        <a href="https://www.gramedia.com/search?q=${q}" target="_blank" rel="noopener">Gramedia</a>
+        <a href="https://openlibrary.org/search?q=${q}" target="_blank" rel="noopener">Open Library</a></div>
+      <p class="form-err" id="ceErr"></p>
+      <div class="modal-actions">
+        ${b.cover_url ? `<button class="btn ghost sm danger" id="ceReset" type="button">${ic('repeat')}Kembali ke otomatis</button>` : ''}<span class="spacer"></span>
+        <button class="btn ghost" data-action="close-modal" type="button">Batal</button>
+        <button class="btn primary" id="ceSave" type="button" disabled>${ic('check')}Simpan sampul</button>
+      </div></div>`, {
+      onOpen: (root) => {
+        let chosen = null;
+        const err = (t) => { $('#ceErr', root).textContent = t || ''; };
+        const choose = async (url, { fromUpload = false } = {}) => {
+          err('');
+          const prev = $('#cePrev', root);
+          prev.className = 'cover'; prev.innerHTML = `<span class="cover-in"><span class="cover-t">${esc(b.title)}</span></span>${imgTag(url)}`;
+          $('#ceSave', root).disabled = true;
+          const ok = fromUpload ? { w: 1, h: 1 } : await probeImg(url);
+          if (!ok) { chosen = null; err('Gambar tidak bisa dimuat dari tautan itu. Coba tautan lain atau unggah file.'); prev.className = 'cover ce-empty'; prev.innerHTML = `${ic('image')}<span>Gagal<br>dimuat</span>`; return; }
+          if (!fromUpload && ok.w > ok.h * 1.15) err('Catatan: gambar ini melebar (landscape) — sampul buku biasanya tegak.');
+          chosen = url; $('#ceSave', root).disabled = false;
+          $$('.ce-cands button', root).forEach((x) => x.classList.toggle('on', x.dataset.url === url));
+        };
+        // unggah file
+        const upload = async (file) => {
+          if (!file) return;
+          try { toast('Mengunggah sampul…', 'muted'); $('#ceSave', root).disabled = true; await choose(await S.uploadImage(file, 'sampul'), { fromUpload: true }); }
+          catch (e) { err(e.message || 'Gagal mengunggah gambar.'); }
+        };
+        $('#ceFile', root).addEventListener('change', (e) => upload(e.target.files[0]));
+        const drop = $('#ceDrop', root);
+        drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+        drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+        drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); upload(e.dataTransfer.files[0]); });
+        // tautan
+        const useUrl = () => {
+          const v = $('#ceUrl', root).value.trim();
+          if (!/^https:\/\/\S+$/i.test(v)) { err('Tempel tautan gambar yang diawali https://'); return; }
+          choose(v);
+        };
+        $('#ceUrlBtn', root).addEventListener('click', useUrl);
+        $('#ceUrl', root).addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); useUrl(); } });
+        $('#ceUrl', root).addEventListener('paste', () => setTimeout(useUrl, 30));
+        // saran sampul: edisi Open Library + hasil pencarian yang judulnya cocok
+        (async () => {
+          const urls = new Set();
+          const mt = window.API.metaOf(b);
+          if (mt.isbn) urls.add(`https://covers.openlibrary.org/b/isbn/${mt.isbn}-L.jpg?default=false`);
+          const jobs = [window.API.searchWorld(`${b.title} ${String(b.author).split(/\s*&\s*|,\s*/)[0]}`, { limit: 20 }).then((r) => r.filter((x) => x.cover_url && window.API.titleMatch(x.title, b.title)).forEach((x) => urls.add(x.cover_url)))];
+          if (mt.olKey) jobs.push(window.API.editions(mt.olKey, 40).then((r) => r.items.forEach((e) => { if (e.cover) urls.add(e.cover.replace(/-S\.jpg$/, '-L.jpg')); })));
+          await Promise.allSettled(jobs);
+          const box = $('#ceCands', root);
+          if (!box || !document.contains(box)) return;
+          if (cur) urls.delete(cur);
+          const list = [...urls].slice(0, 24);
+          box.innerHTML = list.length ? list.map((u) => `<button type="button" data-url="${esc(u)}" title="Pakai sampul ini"><img src="${esc(u)}" alt="" loading="lazy" referrerpolicy="no-referrer" onload="if(this.naturalWidth<41)this.parentNode.remove()" onerror="this.parentNode.remove()"></button>`).join('')
+            : '<p class="muted sm">Tidak ada saran yang cocok — unggah foto atau tempel tautan gambar.</p>';
+          box.addEventListener('click', (e) => { const x = e.target.closest('button[data-url]'); if (x) choose(x.dataset.url); });
+        })();
+        $('#ceSave', root).addEventListener('click', () => {
+          if (!chosen) return;
+          const url = chosen.startsWith('data:') ? chosen : chosen.split('#')[0] + ADMIN_MARK;
+          setBookCover(b, url);
+          closeModal(); toast('Sampul diperbarui ✨'); refresh();
+        });
+        const rs = $('#ceReset', root);
+        if (rs) rs.addEventListener('click', () => {
+          setBookCover(b, null);
+          closeModal(); toast('Sampul dikembalikan ke otomatis — dicari ulang dari katalog dunia.', 'muted'); refresh();
+        });
+      },
+    });
+  }
+
   /* ===================== aksi ===================== */
   function shelfToggle(bid, kind, el) {
     if (!requireAuth()) return;
@@ -2117,6 +2337,7 @@
 
   const ACTIONS = {
     'close-modal': closeModal,
+    'edit-cover': (el) => openCoverEditor(el.dataset.book),
     'add-book': (el) => openAddBook({ title: el.dataset.title || '' }),
     'scan-isbn': () => openScanner((code) => go('#/jelajah?q=' + code)),
     'open-auth': (el) => openAuth(el.dataset.tab),
@@ -2198,6 +2419,8 @@
     },
     'list-remove': (el) => { const it = S.get('list_items', el.dataset.item); S.remove('list_items', (x) => x.id === it.id); renumber(it.list_id); toast('Dihapus dari daftar', 'muted'); refresh(); },
     'copy-link': (el) => copyText(baseUrl() + el.dataset.href),
+    'copy-text': (el) => copyText(el.dataset.text, 'Alamat email disalin'),
+    'share-profile': (el) => copyText(baseUrl() + '#/u/' + el.dataset.user, 'Tautan profil disalin 🔗'),
     share: (el) => copyText(`${baseUrl()}#/buku/${encodeURIComponent(el.dataset.book)}`),
     follow: (el) => {
       if (!requireAuth()) return;
@@ -2326,7 +2549,7 @@
     const q = sInput.value.trim();
     const my = ++sSeq;
     if (!q) return closeSearchPop();
-    const bs = searchBooks(q).slice(0, 4), us = searchUsers(q).slice(0, 3);
+    const bs = searchBooks(q).slice(0, 5), us = searchUsers(q).slice(0, 3);
     sPop.innerHTML = (bs.length ? `<p class="sp-label">Di ruangbaca</p>${bs.map((b) => `<a href="#/buku/${encodeURIComponent(b.id)}" class="pick">${cover(b, { size: 'xs', link: false })}<span><b>${esc(b.title)}</b><small>${esc(b.author)}${b.year ? ' · ' + b.year : ''}</small></span></a>`).join('')}` : '')
       + (us.length ? `<p class="sp-label">Anggota</p>${us.map((u) => `<a href="#/u/${esc(u.username)}" class="pick">${avatar(u, 'sm', false)}<span><b>${esc(u.name)}</b><small>@${esc(u.username)}</small></span></a>`).join('')}` : '')
       + (q.length >= 3 ? `<div data-sp-world><p class="sp-label">${ic('globe')} Katalog dunia…</p></div>` : '')
@@ -2361,6 +2584,7 @@
   route(/^\/$/, viewHome, 'home');
   route(/^\/jelajah$/, viewExplore, 'jelajah');
   route(/^\/trending$/, viewTrending, 'trending');
+  route(/^\/kontak$/, viewContact, '');
   route(/^\/penulis\/(.+)$/, viewAuthor, 'jelajah');
   route(/^\/penerbit\/(.+)$/, viewPublisher, 'jelajah');
   route(/^\/buku\/(.+)$/, viewBook, 'jelajah');
