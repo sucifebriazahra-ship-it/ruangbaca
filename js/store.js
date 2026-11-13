@@ -122,13 +122,26 @@
     list.forEach((t, i) => { data[t] = res[i]; });
     if (list.includes('books')) mergeCatalog();
   }
+  /* sesi login kedaluwarsa (mis. tab dibiarkan terbuka berjam-jam) → perbarui token lalu coba sekali lagi */
+  const isAuthErr = (e) => e && (e.code === 'PGRST301' || e.status === 401 || /jwt|token|expired|row-level security/i.test(e.message || ''));
+  async function freshSession() {
+    try { const { data: d } = await client.auth.getSession(); if (d && d.session) return true; } catch (e) { /* lanjut */ }
+    try { const { data: d } = await client.auth.refreshSession(); return !!(d && d.session); } catch (e) { return false; }
+  }
+  async function runRemote(fn) {
+    let r;
+    try { r = await fn(); } catch (e) { r = { error: e }; }
+    if (r && r.error && isAuthErr(r.error)) {
+      try { await client.auth.refreshSession(); } catch (e) { /* abaikan */ }
+      try { r = await fn(); } catch (e) { r = { error: e }; }
+    }
+    return r || {};
+  }
   function remote(label, fn) {
     if (!client) return;
     chain = chain.then(async () => {
-      try {
-        const r = await fn();
-        if (r && r.error) { console.error(label, r.error); emit('error', { label, error: r.error }); }
-      } catch (e) { console.error(label, e); emit('error', { label, error: e }); }
+      const r = await runRemote(fn);
+      if (r.error) { console.error(label, r.error); emit('error', { label, error: r.error }); }
     });
   }
   function ensureBookRemote(bookId) {
@@ -191,6 +204,8 @@
         const { data: s } = await client.auth.getSession();
         this.userId = s && s.session ? s.session.user.id : null;
         await loadAll();
+        // tab yang lama ditinggal (Safari/HP sering menidurkannya) → segarkan sesi saat dibuka lagi
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) freshSession(); });
         client.auth.onAuthStateChange(async (event, session) => {
           const id = session ? session.user.id : null;
           if (id === this.userId && event !== 'USER_UPDATED') return;
@@ -252,6 +267,25 @@
       const ex = this.get('books', book.id);
       if (ex) { Object.keys(book).forEach((k) => { if ((ex[k] === null || ex[k] === undefined || ex[k] === '') && book[k]) ex[k] = book[k]; }); saveDemo(); return ex; }
       return this.insert('books', { ...book, created_at: now() });
+    },
+    /** simpan buku baru dan TUNGGU sampai benar-benar masuk database.
+        Gagal → buku dibuang lagi dari tampilan dan alasannya dikembalikan (tidak pura-pura tersimpan). */
+    async saveBook(book) {
+      if (!ONLINE) return { book: this.upsertBook(book) };
+      if (!this.userId) return { error: 'Kamu perlu masuk dulu untuk menambah buku.' };
+      if (!(await freshSession())) return { error: 'Sesi login kamu sudah habis. Keluar lalu masuk lagi, ya.' };
+      const r = { ...book, created_by: this.userId, created_at: book.created_at || now() };
+      const row = clean(r); delete row.rank;
+      await chain; // tunggu antrean penulisan sebelumnya selesai
+      const res = await runRemote(() => client.from('books').insert(row));
+      if (res.error) {
+        console.error('Simpan buku', res.error);
+        const m = res.error.message || String(res.error);
+        return { error: /row-level security/i.test(m) ? 'Sesi login kamu tidak dikenali server. Keluar lalu masuk lagi, lalu coba simpan ulang.' : 'Server menolak: ' + m };
+      }
+      if (!data.books.some((x) => x.id === r.id)) data.books.push(r);
+      emit('change', { table: 'books', type: 'INSERT', row: r });
+      return { book: r };
     },
     /** pastikan buku (mis. dari katalog bawaan) sudah ada di database sebelum diubah */
     pushBook(id) { if (ONLINE) ensureBookRemote(id); },

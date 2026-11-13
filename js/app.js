@@ -445,6 +445,7 @@
             <a href="#/pesan">${ic('chat')}Pesan</a>
             <a href="#/u/${esc(u.username)}/statistik">${ic('chart')}Statistik</a>
             <a href="#/pengaturan">${ic('settings')}Pengaturan</a>
+            <a href="#/kontak">${ic('mail')}Kontak</a>
             ${u.is_admin ? `<a href="#/admin">${ic('shield')}Admin</a>` : ''}
             <button data-action="theme" class="show-sm">${ic(theme === 'dark' ? 'sun' : 'moon')}Ganti tema</button>
             <button data-action="logout" class="danger">${ic('logout')}Keluar</button>
@@ -1959,9 +1960,10 @@
         f.addEventListener('change', (e) => {
           if (e.target.name === 'genres' && $$('input[name=genres]:checked', f).length > 3) { e.target.checked = false; toast('Maksimal 3 genre', 'muted'); }
         });
-        f.addEventListener('submit', (e) => {
+        f.addEventListener('submit', async (e) => {
           e.preventDefault();
           const err = $('#abErr', root);
+          err.textContent = '';
           const t = f.title.value.trim(), a = f.author.value.trim();
           if (t.length < 1) return (err.textContent = 'Judul wajib diisi.');
           if (a.length < 2) return (err.textContent = 'Nama penulis wajib diisi.');
@@ -1971,12 +1973,19 @@
           if (dup) { closeModal(); toast(`Buku ini sudah ada di katalog: <b>${esc(dup.title)}</b>`); if (onDone) onDone(dup.id); else go(`#/buku/${encodeURIComponent(dup.id)}`); return; }
           const id = 'u-' + window.RB_CATALOG.slug(t).slice(0, 40) + '-' + Math.random().toString(36).slice(2, 6);
           const genresSel = $$('input[name=genres]:checked', f).map((x) => x.value);
-          S.upsertBook({
+          const btn = f.querySelector('button[type=submit], button.btn.primary');
+          if (btn) { btn.disabled = true; btn.dataset.label = btn.innerHTML; btn.innerHTML = 'Menyimpan…'; }
+          const res = await S.saveBook({
             id, title: t, author: a, year: Number(f.year.value) || null, pages: Number(f.pages.value) || null,
             genres: genresSel.length ? genresSel : ['Fiksi'], synopsis: f.synopsis.value.trim(), cover_url: coverUrl || null,
             ol_key: null, isbn: code, publisher: f.publisher.value.trim() || null, language: f.language.value || null,
             hot: false, trend_note: null, source: 'pengguna', created_by: me().id,
           });
+          if (res.error) {
+            if (btn) { btn.disabled = false; btn.innerHTML = btn.dataset.label; }
+            err.textContent = 'Buku belum tersimpan. ' + res.error;
+            return;
+          }
           closeModal();
           FX.confetti();
           toast(`<b>${esc(t)}</b> ditambahkan ke katalog 📚`);
